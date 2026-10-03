@@ -142,5 +142,50 @@ class CliTests(BaseTestCase):
         self.assertIn("…", out)
 
 
+HIST_SAMPLE = "price\n" + "".join(f"{v}\n" for v in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
+
+
+class HistTests(BaseTestCase):
+    def test_hist_buckets_cover_all_values(self):
+        path = self.write_csv(HIST_SAMPLE)
+        code, out = self.run_cli("hist", path, "--col", "price", "--json")
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(payload["total"], 10)
+        self.assertEqual(payload["min"], 1.0)
+        self.assertEqual(payload["max"], 10.0)
+        self.assertEqual(sum(b["count"] for b in payload["buckets"]), 10)
+
+    def test_hist_human_render(self):
+        path = self.write_csv(HIST_SAMPLE)
+        code, out = self.run_cli("hist", path, "--col", "price", "--bins", "5")
+        self.assertEqual(code, 0)
+        self.assertIn("column: price", out)
+        self.assertIn("#", out)
+
+    def test_hist_text_column_errors(self):
+        path = self.write_csv(SAMPLE)
+        code, _ = self.run_cli("hist", path, "--col", "city")
+        self.assertEqual(code, 1)
+
+    def test_hist_unknown_column_errors(self):
+        path = self.write_csv(SAMPLE)
+        code, _ = self.run_cli("hist", path, "--col", "nope")
+        self.assertEqual(code, 1)
+
+    def test_hist_constant_column(self):
+        path = self.write_csv("v\n5\n5\n5\n")
+        code, out = self.run_cli("hist", path, "--col", "v", "--json")
+        self.assertEqual(code, 0)
+        payload = json.loads(out)
+        self.assertEqual(sum(b["count"] for b in payload["buckets"]), 3)
+
+    def test_hist_missing_values_ignored(self):
+        path = self.write_csv("v\n1\n\n3\n")
+        code, out = self.run_cli("hist", path, "--col", "v", "--json")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["total"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

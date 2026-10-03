@@ -5,7 +5,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 ### Planned
-- `hist` subcommand: ASCII histogram for numeric columns
+- `--sample N`: profile a random sample of huge files
+- TSV output option
+- Optional xlsx export
+
+## [0.2.0] - 2026-10-03
+### Added
+- `hist` subcommand: equal-width ASCII histogram of a numeric column
+  (`--col`, `--bins`, default 10), bar scaled to the peak bucket;
+  `--json` payload exposes the bucket edges and counts
 
 ## [0.1.0] - 2026-10-03
 ### Added
