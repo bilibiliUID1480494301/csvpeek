@@ -7,6 +7,7 @@ inside a CSV: structure overview, head rows and quick statistics.
     csvpeek info data.csv
     csvpeek head data.csv -n 5
     csvpeek stats data.csv --cols price,qty
+    csvpeek hist data.csv --col price --bins 10
 
 Encoding and delimiter are auto-detected (utf-8-sig / utf-8 / gbk / latin-1,
 `,` `;` TAB `|`), which makes it friendly for files exported by Excel on
@@ -23,7 +24,7 @@ import statistics
 import sys
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 ENCODING_CANDIDATES = ("utf-8-sig", "utf-8", "gbk", "latin-1")
 DELIMITER_CANDIDATES = ",;\t|"
@@ -163,6 +164,49 @@ def _sig(x, digits=6):
     return float(f"{x:.{digits}g}")
 
 
+def build_hist_payload(rows, col, bins=10):
+    """Equal-width histogram of a numeric column.
+
+    Raises KeyError for unknown or non-numeric columns so the CLI can
+    report it through the usual error path.
+    """
+    profiles = profile_rows(rows)
+    if col not in profiles:
+        raise KeyError("unknown column(s): " + col)
+    info = profiles[col]
+    if info["type"] not in ("int", "float"):
+        raise KeyError(f"column {col!r} is not numeric (type: {info['type']})")
+    values = [float(row.get(col)) for row in rows
+              if row.get(col) not in (None, "")]
+    if not values:
+        raise KeyError(f"column {col!r} has no numeric values")
+    bins = max(1, int(bins))
+    lo, hi = min(values), max(values)
+    width = (hi - lo) / bins if hi > lo else 0.0
+    counts = [0] * bins
+    for v in values:
+        if width == 0 or v == hi:
+            idx = bins - 1
+        else:
+            idx = int((v - lo) / width)
+        counts[idx] += 1
+    buckets = []
+    for i, count in enumerate(counts):
+        buckets.append({
+            "low": _sig(lo + i * width),
+            "high": _sig(lo + (i + 1) * width),
+            "count": count,
+        })
+    return {
+        "column": col,
+        "bins": bins,
+        "total": len(values),
+        "min": _sig(lo),
+        "max": _sig(hi),
+        "buckets": buckets,
+    }
+
+
 # ---- rendering ---------------------------------------------------------
 def _cell(value, max_width=MAX_CELL_WIDTH):
     text = str(value)
@@ -232,7 +276,24 @@ def render_stats(payload):
     return render_table(header, table)
 
 
-RENDER = {"info": render_info, "head": render_head, "stats": render_stats}
+def render_hist(payload):
+    lines = [
+        f"column: {payload['column']}   n: {payload['total']}   "
+        f"min: {payload['min']:.6g}   max: {payload['max']:.6g}"
+    ]
+    buckets = payload["buckets"]
+    peak = max((b["count"] for b in buckets), default=0) or 1
+    last = len(buckets) - 1
+    for i, bucket in enumerate(buckets):
+        closing = "]" if i == last else ")"
+        label = f"[{bucket['low']:.6g} .. {bucket['high']:.6g}{closing}"
+        bar = "#" * int(round(40.0 * bucket["count"] / peak))
+        lines.append(f"{label:<24} {bar:<40} {bucket['count']}")
+    return "\n".join(lines)
+
+
+RENDER = {"info": render_info, "head": render_head, "stats": render_stats,
+          "hist": render_hist}
 
 
 # ---- CLI ---------------------------------------------------------------
@@ -242,7 +303,7 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--version", action="version", version=f"csvpeek {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("info", "head", "stats"):
+    for name in ("info", "head", "stats", "hist"):
         p = sub.add_parser(name, help=f"{name} view of a CSV file")
         p.add_argument("file", help="path to the CSV file")
         p.add_argument("--json", action="store_true", help="machine-readable output")
@@ -252,6 +313,12 @@ def main(argv=None) -> int:
             p.add_argument("-n", type=int, default=5, help="rows to show (default: 5)")
         if name == "stats":
             p.add_argument("--cols", help="comma-separated subset of columns")
+        if name == "hist":
+            p.add_argument("--col", required=True, help="numeric column to plot")
+            p.add_argument(
+                "--bins", type=int, default=10,
+                help="number of equal-width buckets (default: 10)",
+            )
 
     args = parser.parse_args(argv)
     try:
@@ -269,6 +336,8 @@ def main(argv=None) -> int:
             payload = build_info_payload(rows, enc, delim)
         elif args.command == "head":
             payload = build_head_payload(rows, args.n)
+        elif args.command == "hist":
+            payload = build_hist_payload(rows, args.col, args.bins)
         else:
             payload = build_stats_payload(rows, args.cols)
     except KeyError as exc:
